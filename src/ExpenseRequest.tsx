@@ -2,20 +2,31 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
 import { useAuth } from './AuthContext';
 import { Send } from 'lucide-react';
+import ApprovalLinePicker from './ApprovalLinePicker';
 
 const ExpenseRequest: React.FC = () => {
-    const { staff } = useAuth();
-    const [amount, setAmount] = useState('');
-    const [description, setDescription] = useState('');
-    const [date, setDate] = useState('');
-    const [receiptFile, setReceiptFile] = useState<File | null>(null);
-    const [loading, setLoading] = useState(false);
-    const [success, setSuccess] = useState(false);
+  const { staff } = useAuth();
+  const [amount, setAmount] = useState(''); // Stores formatted string for display
+  const [description, setDescription] = useState('');
+  const [date, setDate] = useState('');
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [approvalLine, setApprovalLine] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [myClaims, setMyClaims] = useState<any[]>([]);
 
-    const [myClaims, setMyClaims] = useState<any[]>([]);
+  // Helper to format number with commas
+  const formatNumber = (val: string) => {
+    if (!val) return '';
+    const num = val.replace(/[^0-9]/g, '');
+    return num.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  };
+
+  // Helper to remove commas
+  const unformatNumber = (val: string) => val.replace(/,/g, '');
 
   const fetchMyClaims = async () => {
-    if (!staff?.id) return; // Ensure staff ID is available
+    if (!staff?.id) return;
     const { data } = await supabase
       .from('expense_claims')
       .select('*')
@@ -26,11 +37,12 @@ const ExpenseRequest: React.FC = () => {
 
   useEffect(() => {
     fetchMyClaims();
-  }, [staff?.id]); // Refetch when staff ID changes
+  }, [staff?.id]);
 
   const handleSubmit = async () => {
-    if (!amount || !description || !date) {
-      alert('금액, 설명, 날짜를 모두 입력해주세요.');
+    const rawAmount = unformatNumber(amount);
+    if (!rawAmount || !description || !date || approvalLine.length === 0) {
+      alert('금액, 설명, 날짜, 결재 라인을 모두 입력해주세요.');
       return;
     }
     setLoading(true);
@@ -49,32 +61,49 @@ const ExpenseRequest: React.FC = () => {
       const { data } = supabase.storage.from('hr-documents').getPublicUrl(filePath);
       receiptUrl = data?.publicUrl || null;
     }
-    const { error } = await supabase.from('expense_claims').insert({
+    const { data: claimData, error } = await supabase.from('expense_claims').insert({
       staff_id: staff.id,
-      amount: parseFloat(amount),
+      amount: parseFloat(rawAmount),
       description,
       expense_date: date,
       receipt_url: receiptUrl,
       status: 'Pending',
       date_submitted: new Date().toISOString(),
-    });
-    if (error) {
+    }).select();
+
+    if (error || !claimData) {
       console.error(error);
       alert('신청 중 오류가 발생했습니다.');
     } else {
+      // Insert approval steps
+      const steps = approvalLine.map((approverId, index) => ({
+        request_id: claimData[0].id,
+        request_type: 'expense',
+        approver_id: approverId,
+        step_order: index + 1,
+        status: 'Pending'
+      }));
+
+      const { error: stepError } = await supabase.from('approval_steps').insert(steps);
+      
+      if (stepError) {
+        console.error('Step insert error', stepError);
+      }
+
       setSuccess(true);
       setAmount('');
       setDescription('');
       setDate('');
       setReceiptFile(null);
-      fetchMyClaims(); // Refresh claims after successful submission
+      setApprovalLine([]);
+      fetchMyClaims();
       setTimeout(() => setSuccess(false), 3000);
     }
     setLoading(false);
   };
 
   return (
-    <div className="animate-fade" style={{ maxWidth: '800px', margin: '0 auto', padding: '24px' }}>
+    <div className="animate-fade">
       <header style={{ marginBottom: '32px' }}>
         <h2>경비 신청</h2>
         <p style={{ color: 'var(--text-muted)' }}>개인 경비 지출 내역을 입력하고 증빙(영수증)을 첨부하여 승인을 요청하세요.</p>
@@ -99,25 +128,40 @@ const ExpenseRequest: React.FC = () => {
             ✅ 신청이 성공적으로 완료되었습니다!
           </div>
         )}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-          <div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-start' }}>
+          <div style={{ marginBottom: '20px', flex: '1 1 200px' }}>
             <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem' }}>금액 (원)</label>
-            <input className="input-field" type="number" placeholder="0" value={amount} onChange={e => setAmount(e.target.value)} />
+            <input 
+              className="input-field" 
+              type="text" 
+              placeholder="0" 
+              value={amount} 
+              onChange={e => setAmount(formatNumber(e.target.value))} 
+            />
           </div>
-          <div>
+          <div style={{ marginBottom: '20px', flex: '1 1 200px' }}>
             <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem' }}>지출 날짜</label>
             <input className="input-field" type="date" value={date} onChange={e => setDate(e.target.value)} />
           </div>
-          <div style={{ gridColumn: 'span 2' }}>
+          <div style={{ marginBottom: '20px', width: '100%' }}>
             <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem' }}>항목 및 설명</label>
-            <textarea className="input-field" rows={2} placeholder="경비 지출 목적 및 내용" value={description} onChange={e => setDescription(e.target.value)} />
+            <input 
+              type="text" 
+              className="input-field" 
+              placeholder="경비 지출 목적 및 내용" 
+              value={description} 
+              onChange={e => setDescription(e.target.value)} 
+            />
           </div>
-          <div style={{ gridColumn: 'span 2' }}>
+          <div style={{ marginBottom: '20px', width: '100%' }}>
             <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem' }}>증빙 첨부 (이미지/PDF)</label>
-            <input type="file" accept="image/*,application/pdf" onChange={e => setReceiptFile(e.target.files?.[0] || null)} />
+            <input type="file" className="input-field" accept="image/*,application/pdf" onChange={e => setReceiptFile(e.target.files?.[0] || null)} />
           </div>
         </div>
-        <button className="btn btn-primary" onClick={handleSubmit} disabled={loading} style={{ marginTop: '24px' }}>
+
+        <ApprovalLinePicker onLineChange={setApprovalLine} />
+
+        <button className="btn btn-primary" onClick={handleSubmit} disabled={loading} style={{ width: '100%', height: '48px', justifyContent: 'center' }}>
           <Send size={18} />
           {loading ? '신청 중...' : '신청하기'}
         </button>

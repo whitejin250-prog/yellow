@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from './AuthContext';
-import { LayoutDashboard, FileText, UserCircle, ShieldCheck, Mail, LogOut, Users, Phone, Settings, Bell, GitBranch, Menu, X } from 'lucide-react';
+import { supabase } from './supabase';
+import { LayoutDashboard, FileText, UserCircle, ShieldCheck, Mail, LogOut, Users, Settings, Bell, GitBranch, Menu, X } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 
 const Sidebar: React.FC<{ isOpen: boolean; toggleSidebar: () => void }> = ({ isOpen, toggleSidebar }) => {
@@ -11,36 +12,176 @@ const Sidebar: React.FC<{ isOpen: boolean; toggleSidebar: () => void }> = ({ isO
 
     const menuItems = [
         { name: '홈', icon: LayoutDashboard, path: '/', roles: ['Admin', 'User'] },
-        { name: '조직도', icon: GitBranch, path: '/org-chart', roles: ['Admin', 'User'] },
-        // Admin Only Items
+        {
+            name: '게시판',
+            icon: Bell,
+            roles: ['Admin', 'User'],
+            children: [
+                { name: '공지사항', icon: Bell, path: '/announcements', roles: ['Admin', 'User'] },
+                { name: '조직도', icon: GitBranch, path: '/org-chart', roles: ['Admin', 'User'] },
+            ]
+        },
+        {
+            name: '전자결재',
+            icon: ShieldCheck,
+            roles: ['Admin', 'User'],
+            children: [
+                { name: '경비 신청', icon: Bell, path: '/expense-request', roles: ['Admin', 'User'] },
+                { name: '증명서 신청', icon: FileText, path: '/request', roles: ['Admin', 'User'] },
+                { name: '결재문서관리', icon: FileText, path: '/admin/approvals', roles: ['Admin', 'User'] },
+            ]
+        },
+        { name: '내 정보 조회', icon: UserCircle, path: '/my-info', roles: ['Admin', 'User'], userOnly: true },
+        // Admin Only Items (Management)
         { name: '전체 직원 관리', icon: Users, path: '/admin/staff', roles: ['Admin'], adminOnly: true },
         { name: '공지사항 관리', icon: Bell, path: '/admin/announcements', roles: ['Admin'], adminOnly: true },
-        { name: '경비 신청', icon: Bell, path: '/expense-request', roles: ['User'], userOnly: true },
-        { name: '경비 보고', icon: Bell, path: '/admin/expense-reports', roles: ['Admin'], adminOnly: true },
-        { name: '공지사항', icon: Bell, path: '/announcements', roles: ['Admin', 'User'] },
-        { name: '결재 대기 목록', icon: FileText, path: '/admin/approvals', roles: ['Admin'], adminOnly: true },
         { name: '양식/종류 관리', icon: Settings, path: '/admin/templates', roles: ['Admin'], adminOnly: true },
         { name: '계약서 발송', icon: Mail, path: '/admin/send-contract', roles: ['Admin'], adminOnly: true },
-        // User Only Items
-        { name: '내 정보 조회', icon: UserCircle, path: '/my-info', roles: ['User'], userOnly: true },
-        { name: '증명서 신청', icon: FileText, path: '/request', roles: ['User'], userOnly: true },
-        { name: '비상연락망', icon: Phone, path: '/contacts', roles: ['User'], userOnly: true },
-        { name: '내 근로계약서', icon: ShieldCheck, path: '/contracts', roles: ['User'], userOnly: true },
     ];
 
-    const filteredItems = menuItems.filter(item => {
-        // Dashboard is always visible if the user has either role
-        if (item.name === 'Dashboard') {
-            return item.roles.includes(staff?.role_level || 'User');
+    const [pendingCount, setPendingCount] = useState<number>(0);
+    const [openMenus, setOpenMenus] = useState<string[]>(['게시판', '전자결재']);
+
+    const toggleMenu = (name: string) => {
+        setOpenMenus(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
+    };
+
+    const fetchPendingCounts = async () => {
+        if (!staff?.id) return;
+        
+        const { data: steps, error } = await supabase
+            .from('approval_steps')
+            .select('*')
+            .eq('approver_id', staff.id)
+            .eq('status', 'Pending');
+            
+        if (error || !steps) {
+            setPendingCount(0);
+            return;
         }
 
-        if (isAdminMode) {
-            return item.roles.includes('Admin');
-        } else {
-            // In user mode, show user-specific items and items that are not admin-only
-            return item.roles.includes('User') && !item.adminOnly;
+        let turnCount = 0;
+        for (const step of steps) {
+            const { data: prevSteps } = await supabase
+                .from('approval_steps')
+                .select('status')
+                .eq('request_id', step.request_id)
+                .lt('step_order', step.step_order);
+            
+            if ((prevSteps || []).every(ps => ps.status === 'Approved')) {
+                turnCount++;
+            }
         }
-    });
+        
+        setPendingCount(turnCount);
+    };
+
+    useEffect(() => {
+        fetchPendingCounts();
+    }, [isAdminMode, location.pathname, staff?.id]);
+
+    const filterItems = (items: any[]): any[] => {
+        return items.filter(item => {
+            if (isAdminMode) {
+                return item.roles.includes('Admin');
+            } else {
+                return item.roles.includes('User') && !item.adminOnly;
+            }
+        }).map(item => {
+            if (item.children) {
+                return { ...item, children: filterItems(item.children) };
+            }
+            return item;
+        }).filter(item => !item.children || item.children.length > 0);
+    };
+
+    const filteredItems = filterItems(menuItems);
+
+    const renderMenuItem = (item: any, isSubItem = false) => {
+        const isActive = location.pathname === item.path;
+        const hasChildren = item.children && item.children.length > 0;
+        const isOpen = openMenus.includes(item.name);
+        
+        let badge = 0;
+        if (item.name === '결재문서관리') badge = pendingCount;
+
+        const content = (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <item.icon size={isSubItem ? 18 : 20} />
+                <span style={{ 
+                    fontSize: isSubItem ? '0.85rem' : '1rem',
+                    fontWeight: isSubItem ? (isActive ? '600' : '500') : '600'
+                }}>{item.name}</span>
+            </div>
+        );
+
+        if (hasChildren) {
+            return (
+                <div key={item.name} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div
+                        onClick={() => toggleMenu(item.name)}
+                        className="btn"
+                        style={{
+                            justifyContent: 'space-between',
+                            background: 'transparent',
+                            color: 'var(--text-main)',
+                            padding: '12px 16px',
+                            cursor: 'pointer',
+                            borderRadius: '12px'
+                        }}
+                    >
+                        {content}
+                        <svg 
+                            style={{ transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.2s', opacity: 0.6 }}
+                            width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                        >
+                            <path d="m6 9 6 6 6-6"/>
+                        </svg>
+                    </div>
+                    {isOpen && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '24px' }}>
+                            {item.children.map((child: any) => renderMenuItem(child, true))}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        return (
+            <Link
+                key={item.path}
+                to={item.path}
+                className={`btn ${isActive ? 'btn-primary' : ''}`}
+                onClick={() => {
+                    if (window.innerWidth <= 768) {
+                        toggleSidebar();
+                    }
+                }}
+                style={{
+                    justifyContent: 'space-between',
+                    background: isActive ? 'var(--primary)' : 'transparent',
+                    color: isActive ? 'white' : 'var(--text-main)',
+                    padding: isSubItem ? '8px 16px' : '12px 16px',
+                    borderRadius: '12px',
+                    textDecoration: 'none'
+                }}
+            >
+                {content}
+                {badge > 0 && (
+                    <span style={{
+                        background: 'var(--danger)',
+                        color: 'white',
+                        fontSize: '0.7rem',
+                        padding: '2px 8px',
+                        borderRadius: '10px',
+                        fontWeight: 'bold'
+                    }}>
+                        {badge}
+                    </span>
+                )}
+            </Link>
+        );
+    };
 
     return (
         <aside className={`sidebar glass ${isOpen ? 'open' : ''}`}>
@@ -96,36 +237,14 @@ const Sidebar: React.FC<{ isOpen: boolean; toggleSidebar: () => void }> = ({ isO
                             }} />
                         </div>
                     </div>
-                    <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                    <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', margin: 0 }}>
                         {isAdminMode ? '관리자용 메뉴가 활성화되었습니다.' : '일반 직원 모드입니다.'}
                     </p>
                 </div>
             )}
 
-            <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {filteredItems.map(item => (
-                    <Link
-                        key={item.path}
-                        to={item.path}
-                        className={`btn ${location.pathname === item.path ? 'btn-primary' : ''}`}
-                        onClick={() => {
-                            if (window.innerWidth <= 768) {
-                                toggleSidebar();
-                            }
-                        }}
-                        style={{
-                            justifyContent: 'flex-start',
-                            background: location.pathname === item.path ? 'var(--primary)' : 'transparent',
-                            color: location.pathname === item.path ? 'white' : 'var(--text-muted)',
-                            padding: '12px 16px',
-                            borderRadius: '12px',
-                            fontWeight: location.pathname === item.path ? '600' : '500'
-                        }}
-                    >
-                        <item.icon size={20} />
-                        {item.name}
-                    </Link>
-                ))}
+            <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto' }}>
+                {filteredItems.map(item => renderMenuItem(item))}
             </nav>
 
             <button

@@ -1,32 +1,79 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from './supabase';
-import { Check, X, FileText, User } from 'lucide-react';
+import { useAuth } from './AuthContext';
+import { Check, X, FileText } from 'lucide-react';
 
 const AdminApprovals: React.FC = () => {
+    const { staff } = useAuth();
     const [approvals, setApprovals] = useState<any[]>([]);
 
     useEffect(() => {
-        fetchApprovals();
-    }, []);
+        if (staff?.id) {
+            fetchApprovals();
+        }
+    }, [staff?.id]);
 
     const fetchApprovals = async () => {
-        const { data } = await supabase
-            .from('approval')
-            .select('*, staff:requester_id(name, employee_no)')
-            .eq('status', 'Pending')
-            .order('request_date', { ascending: true });
-        setApprovals(data || []);
+        try {
+            // 1. Get steps for the current admin that are pending
+            const { data: steps, error } = await supabase
+                .from('approval_steps')
+                .select('*, approval(*, requester:requester_id(name, employee_no))')
+                .eq('approver_id', staff?.id)
+                .eq('status', 'Pending')
+                .eq('request_type', 'certificate');
+            
+            if (error) throw error;
+
+            // 2. Filter for steps where it is actually the current user's turn
+            const validApprovals: any[] = [];
+            for (const step of (steps || [])) {
+                const { data: prevSteps } = await supabase
+                    .from('approval_steps')
+                    .select('status')
+                    .eq('request_id', step.request_id)
+                    .lt('step_order', step.step_order);
+                
+                if ((prevSteps || []).every(ps => ps.status === 'Approved')) {
+                    validApprovals.push({ ...step.approval, step_id: step.id, requester: step.approval.requester });
+                }
+            }
+            setApprovals(validApprovals);
+        } catch (err) {
+            console.error('Fetch approvals error:', err);
+        }
     };
 
-    const handleAction = async (id: string, status: 'Approved' | 'Rejected') => {
-        const { error } = await supabase
-            .from('approval')
-            .update({ status, approver_id: (await supabase.auth.getUser()).data.user?.id })
-            .eq('id', id);
+    const handleAction = async (requestId: string, status: 'Approved' | 'Rejected', stepId: string) => {
+        try {
+            // Update the specific step
+            const { error: stepUpdateError } = await supabase
+                .from('approval_steps')
+                .update({ status, processed_at: new Date().toISOString() })
+                .eq('id', stepId);
+            
+            if (stepUpdateError) throw stepUpdateError;
 
-        if (!error) {
+            // If rejected, the whole request is rejected
+            if (status === 'Rejected') {
+                await supabase.from('approval').update({ status: 'Rejected' }).eq('id', requestId);
+            } else {
+                // If approved, check if it was the last step
+                const { data: remainingSteps } = await supabase
+                    .from('approval_steps')
+                    .select('id')
+                    .eq('request_id', requestId)
+                    .eq('status', 'Pending');
+                
+                if (!remainingSteps || remainingSteps.length === 0) {
+                    await supabase.from('approval').update({ status: 'Approved' }).eq('id', requestId);
+                }
+            }
+            
             alert(`문서가 ${status === 'Approved' ? '승인' : '반려'}되었습니다.`);
             fetchApprovals();
+        } catch (err: any) {
+            alert('오류가 발생했습니다: ' + err.message);
         }
     };
 
@@ -47,7 +94,7 @@ const AdminApprovals: React.FC = () => {
                                 </div>
                                 <div>
                                     <h4 style={{ fontWeight: '700' }}>{app.doc_type}</h4>
-                                    <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{app.staff?.name} ({app.staff?.employee_no})</p>
+                                    <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{app.requester?.name} ({app.requester?.employee_no})</p>
                                 </div>
                             </div>
                             <span className="glass-pill" style={{ color: 'var(--warning)' }}>대기중</span>
@@ -68,7 +115,7 @@ const AdminApprovals: React.FC = () => {
                             <button
                                 className="btn btn-primary"
                                 style={{ flex: 1, justifyContent: 'center' }}
-                                onClick={() => handleAction(app.id, 'Approved')}
+                                onClick={() => handleAction(app.id, 'Approved', app.step_id)}
                             >
                                 <Check size={18} />
                                 승인
@@ -76,7 +123,7 @@ const AdminApprovals: React.FC = () => {
                             <button
                                 className="btn"
                                 style={{ flex: 1, justifyContent: 'center', background: 'rgba(239, 68, 68, 0.1)', color: 'var(--danger)' }}
-                                onClick={() => handleAction(app.id, 'Rejected')}
+                                onClick={() => handleAction(app.id, 'Rejected', app.step_id)}
                             >
                                 <X size={18} />
                                 반려
@@ -96,3 +143,4 @@ const AdminApprovals: React.FC = () => {
 };
 
 export default AdminApprovals;
+

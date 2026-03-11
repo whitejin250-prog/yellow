@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { supabase } from './supabase';
-import { useAuth } from './AuthContext';
 
 const Login: React.FC = () => {
     const [email, setEmail] = useState('');

@@ -2,10 +2,40 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
 import Calendar from './Calendar';
 import TodoList from './TodoList';
-import { Bell, Search, Gift, X } from 'lucide-react';
+import { Bell, Gift, X, Sparkles, Star, Palette } from 'lucide-react';
+
+const FORTUNES = [
+    "오늘은 뜻밖의 기쁜 소식이 찾아올 거예요.",
+    "작은 배려가 큰 보답으로 돌아오는 하루입니다.",
+    "새로운 아이디어가 번뜩이는 창의적인 날이에요.",
+    "충분한 휴식이 큰 활력을 가져다줄 것입니다.",
+    "주변 사람들과의 소통이 행운을 가져다줍니다.",
+    "오랫동안 고민하던 일이 술술 풀릴 징조예요.",
+    "나 자신을 믿고 밀고 나가면 좋은 결과가 있습니다.",
+    "웃음이 끊이지 않는 즐거운 하루가 예상됩니다.",
+    "계획했던 일을 시작하기에 아주 좋은 타이밍이에요.",
+    "오늘은 평소보다 더 빛나는 매력을 발산하겠네요.",
+    "차분한 마음가짐이 실수를 줄여줄 것입니다.",
+    "작은 성공들이 모여 큰 성취를 이룰 거예요.",
+    "오늘은 금전운이 매우 좋은 편이니 기대하세요.",
+    "운동이나 산책으로 에너지를 충전해보세요.",
+    "따뜻한 차 한 잔이 행운의 문을 열어줄 거예요."
+];
+
+const COLORS = [
+    { name: '스카이 블루', hex: '#87CEEB' },
+    { name: '에메랄드 그린', hex: '#50C878' },
+    { name: '선셋 오렌지', hex: '#FF4E50' },
+    { name: '로열 퍼플', hex: '#7851A9' },
+    { name: '펄 화이트', hex: '#F0EAD6' },
+    { name: '라이트 핑크', hex: '#FFB6C1' },
+    { name: '미드나잇 블루', hex: '#191970' },
+    { name: '레몬 옐로우', hex: '#FFF44F' }
+];
 
 const Dashboard: React.FC = () => {
     const [user, setUser] = useState<any>(null);
+    const [staffData, setStaffData] = useState<any>(null);
     const [announcements, setAnnouncements] = useState<any[]>([]);
     const [birthdays, setBirthdays] = useState<any[]>([]);
 
@@ -21,10 +51,11 @@ const Dashboard: React.FC = () => {
             if (user) {
                 const { data: staff } = await supabase
                     .from('staff')
-                    .select('name')
+                    .select('*')
                     .eq('id', user.id)
                     .single();
                 setUser({ ...user, staffName: staff?.name || user.email });
+                setStaffData(staff);
             }
         };
 
@@ -57,6 +88,29 @@ const Dashboard: React.FC = () => {
         fetchAnnouncements();
         fetchBirthdays();
     }, []);
+
+    const generateDailyFortune = () => {
+        if (!staffData?.birthdate) return null;
+        
+        const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+        const seedStr = `${today}-${staffData.birthdate}`;
+        
+        // Simple hash function to generate a deterministic index
+        let hash = 0;
+        for (let i = 0; i < seedStr.length; i++) {
+            hash = ((hash << 5) - hash) + seedStr.charCodeAt(i);
+            hash |= 0;
+        }
+        const absHash = Math.abs(hash);
+        
+        return {
+            fortune: FORTUNES[absHash % FORTUNES.length],
+            number: (absHash % 99) + 1,
+            color: COLORS[absHash % COLORS.length]
+        };
+    };
+
+    const dailyFortune = generateDailyFortune();
 
     const getTimeAgo = (dateStr: string) => {
         const date = new Date(dateStr);
@@ -110,25 +164,45 @@ const Dashboard: React.FC = () => {
 
     return (
         <div className="animate-fade">
-            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '32px' }}>
                 <div>
                     <h1 style={{ fontSize: '2.2rem', fontWeight: '800', marginBottom: '8px', letterSpacing: '-0.02em' }}>Motiv Intelligence</h1>
                     <p style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}><span style={{ color: 'var(--text-bright)', fontWeight: '600' }}>{user?.staffName || 'Guest'}</span>님, 반가워요! 오늘도 활기찬 하루 되세요. ✨</p>
                 </div>
 
-                <div style={{ display: 'flex', gap: '12px' }}>
-                    <div style={{ position: 'relative' }}>
-                        <Search size={18} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                        <input
-                            className="input-field"
-                            placeholder="Search everything..."
-                            style={{ width: '300px', paddingLeft: '48px', height: '48px' }}
-                        />
+                {dailyFortune && (
+                    <div className="glass" style={{ 
+                        padding: '16px 24px', 
+                        display: 'flex', 
+                        flexDirection: 'column', 
+                        gap: '8px',
+                        minWidth: '350px',
+                        border: '1px solid rgba(255, 215, 0, 0.2)', // Subtle gold tint
+                        background: 'rgba(255, 255, 255, 0.03)'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                            <Sparkles size={16} color="#FFD700" />
+                            <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#FFD700', textTransform: 'uppercase', letterSpacing: '0.05em' }}>오늘의 운세</span>
+                        </div>
+                        
+                        <p style={{ fontSize: '0.95rem', fontWeight: '500', color: 'var(--text-main)', margin: 0, lineHeight: '1.4' }}>
+                            "{dailyFortune.fortune}"
+                        </p>
+                        
+                        <div style={{ display: 'flex', gap: '16px', marginTop: '4px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <Star size={14} color="var(--primary)" />
+                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>행운의 숫자: </span>
+                                <span style={{ fontSize: '0.8rem', fontWeight: '700', color: 'var(--primary)' }}>{dailyFortune.number}</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <Palette size={14} color={dailyFortune.color.hex} />
+                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>행운의 컬러: </span>
+                                <span style={{ fontSize: '0.8rem', fontWeight: '700', color: dailyFortune.color.hex }}>{dailyFortune.color.name}</span>
+                            </div>
+                        </div>
                     </div>
-                    <button className="btn" style={{ height: '48px', width: '48px', padding: 0, justifyContent: 'center', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--glass-border)' }}>
-                        <Bell size={20} />
-                    </button>
-                </div>
+                )}
             </header>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px', marginBottom: '32px' }}>

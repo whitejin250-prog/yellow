@@ -19,6 +19,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [staff, setStaff] = useState<any | null>(null);
     const [loading, setLoading] = useState(true);
     const [isAdminMode, setIsAdminMode] = useState(false);
+    const staffRef = React.useRef<any>(null);
 
     useEffect(() => {
         // Get initial session
@@ -29,11 +30,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         // Listen for auth changes
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            console.log("Auth event:", event);
             setUser(session?.user ?? null);
-            if (session?.user) fetchStaff(session.user.id);
-            else {
+            
+            if (session?.user) {
+                // Only fetch if the user ID has changed or we don't have staff data yet
+                if (!staffRef.current || staffRef.current.id !== session.user.id) {
+                    fetchStaff(session.user.id);
+                }
+            } else {
                 setStaff(null);
+                staffRef.current = null;
+                setIsAdminMode(false);
                 setLoading(false);
             }
         });
@@ -61,8 +70,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (staffList && staffList.length > 0) {
             const data = staffList[0];
             console.log("Staff profile successfully loaded:", data);
+            
+            // Only force AdminMode=true if switching to a new Admin user
+            if (data.role_level === 'Admin' && (!staffRef.current || staffRef.current.id !== userId)) {
+                setIsAdminMode(true);
+            }
+            
             setStaff(data);
-            if (data.role_level === 'Admin') setIsAdminMode(true);
+            staffRef.current = data;
             setLoading(false);
         } else {
             // Not found by ID, try by email as fallback
@@ -77,8 +92,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     // Found by email, need to fix the ID link
                     const matched = emailMatch[0];
                     await supabase.from('staff').update({ id: userId }).eq('email', authUser.email);
-                    setStaff({ ...matched, id: userId });
-                    if (matched.role_level === 'Admin') setIsAdminMode(true);
+                    
+                    const updatedMatched = { ...matched, id: userId };
+                    if (updatedMatched.role_level === 'Admin' && (!staffRef.current || staffRef.current.id !== userId)) {
+                        setIsAdminMode(true);
+                    }
+                    
+                    setStaff(updatedMatched);
+                    staffRef.current = updatedMatched;
                     setLoading(false);
                     return;
                 }
@@ -101,8 +122,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 .select();
 
             if (!insertError && newData && newData.length > 0) {
-                setStaff(newData[0]);
-                if (newData[0].role_level === 'Admin') setIsAdminMode(true);
+                const createdStaff = newData[0];
+                if (createdStaff.role_level === 'Admin') setIsAdminMode(true);
+                setStaff(createdStaff);
+                staffRef.current = createdStaff;
             }
             setLoading(false);
         }

@@ -4,6 +4,7 @@ import { useAuth } from './AuthContext';
 import { FileText, Send, Download, Trash2 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import ApprovalLinePicker from './ApprovalLinePicker';
 
 const DocumentRequest: React.FC = () => {
     const { staff } = useAuth();
@@ -13,6 +14,7 @@ const DocumentRequest: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [requests, setRequests] = useState<any[]>([]);
     const [generatingPdf, setGeneratingPdf] = useState(false);
+    const [approvalLine, setApprovalLine] = useState<string[]>([]);
 
     useEffect(() => {
         fetchTemplates();
@@ -114,22 +116,36 @@ const DocumentRequest: React.FC = () => {
     const handleRequest = async () => {
         if (!docType) return alert('증명서 종류를 선택해 주세요.');
         if (!purpose) return alert('용도를 입력해 주세요.');
+        if (approvalLine.length === 0) return alert('결재 라인을 설정해 주세요.');
 
         setLoading(true);
-        const { error } = await supabase.from('approval').insert({
+        const { data: reqData, error } = await supabase.from('approval').insert({
             requester_id: staff.id,
             doc_type: docType,
             purpose: purpose,
-            status: 'Pending'
-        });
+            status: 'Pending',
+            request_date: new Date().toISOString()
+        }).select();
 
-        if (!error) {
+        if (!error && reqData) {
+            // Insert approval steps
+            const steps = approvalLine.map((approverId, index) => ({
+                request_id: reqData[0].id,
+                request_type: 'certificate',
+                approver_id: approverId,
+                step_order: index + 1,
+                status: 'Pending'
+            }));
+
+            await supabase.from('approval_steps').insert(steps);
+
             setShowSuccess(true);
             setPurpose('');
+            setApprovalLine([]);
             fetchRequests();
             setTimeout(() => setShowSuccess(false), 3000);
         } else {
-            alert('신청 중 오류가 발생했습니다: ' + error.message);
+            alert('신청 중 오류가 발생했습니다: ' + (error?.message || 'Unknown error'));
         }
         setLoading(false);
     };
@@ -185,11 +201,14 @@ const DocumentRequest: React.FC = () => {
                             onChange={e => setPurpose(e.target.value)}
                         />
                     </div>
-                    <button className="btn btn-primary" onClick={handleRequest} disabled={loading} style={{ height: '48px', marginTop: '28px', flex: '0 0 auto' }}>
-                        <Send size={18} />
-                        {loading ? '신청 중...' : '신청하기'}
-                    </button>
                 </div>
+
+                <ApprovalLinePicker onLineChange={setApprovalLine} />
+
+                <button className="btn btn-primary" onClick={handleRequest} disabled={loading} style={{ width: '100%', height: '48px', justifyContent: 'center' }}>
+                    <Send size={18} />
+                    {loading ? '신청 중...' : '신청하기'}
+                </button>
             </div>
 
             <h3>신청 내역</h3>
